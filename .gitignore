@@ -1,0 +1,17 @@
+# environments / IDE / local settings
+.venv/
+.idea/
+.claude/
+__pycache__/
+*.pyc
+
+# cloned upstream repo (install separately, see README)
+LIBERO/
+
+# datasets: source demos and generated outputs (large binaries)
+data/
+output/
+
+# large binary artifacts anywhere
+*.hdf5
+*.mp4

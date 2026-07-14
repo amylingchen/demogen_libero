@@ -1,0 +1,18 @@
+# Core simulation stack (versions pinned to match LIBERO)
+robosuite==1.4.0
+mujoco==2.3.7
+
+# LIBERO itself is installed from source (see README): clone
+# https://github.com/Lifelong-Robot-Learning/LIBERO and add it to sys.path
+# (pip install -e LIBERO also works). Its own requirements cover:
+easydict
+gym
+future
+transforms3d
+
+# data / numerics
+numpy<2
+h5py
+opencv-python
+matplotlib
+huggingface_hub
