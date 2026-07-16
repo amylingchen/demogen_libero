@@ -97,6 +97,12 @@ $PY scripts/build_eval_suite.py --task butter \
     --train-scene-log output/butter_100/scene_log.json \
     --n-scenes 30 --out-dir output/butter_eval
 
+# replay existing demos into OC format (faithful copy: no re-placement,
+# adds depth/seg/GT-poses via state replay) — see docs/replay_source_demos_oc.md
+$PY scripts/replay_source_oc.py \
+    --task-key pick_up_the_salad_dressing_and_place_it_in_the_basket \
+    --out-dir output/replay_salad
+
 # visualization
 $PY scripts/visualize_init_states.py --dir output/butter_100
 $PY scripts/visualize_phases.py --dir output/butter_100 --demos demo_0
