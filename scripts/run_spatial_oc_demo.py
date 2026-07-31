@@ -142,7 +142,7 @@ def main():
     def scene_visible(new_init, fx):
         R.reset_to_init_state(env, new_init)
         S.apply_fixture_edits(env, fx)
-        S.settle(env, spec.settle_steps)
+        S.settle(env, spec.settle_physics_steps)
         # force_update is required, not optional (same fix as
         # run_pair_oc_demo.py's `usable`): settle() drives env.sim.step()
         # directly and never touches robosuite's observable cache, which

@@ -380,7 +380,7 @@ def main():
                                          addrs, nq, drawer_adr)
                     R.reset_to_init_state(env, st)
                     S.apply_fixture_edits(env, f2)
-                    S.settle(env, S.SpatialSpec().settle_steps)
+                    S.settle(env, S.SpatialSpec().settle_physics_steps)
                     obs = env.env._get_observations(force_update=True)
                     seg = lut[np.clip(obs["agentview_segmentation_instance"][..., 0],
                                       0, len(lut) - 1)]

@@ -88,7 +88,7 @@ def main():
             continue
         R.reset_to_init_state(env, new_init)
         S.apply_fixture_edits(env, fx)
-        S.settle(env, spec.settle_steps)
+        S.settle(env, spec.settle_physics_steps)
         img = render()
         # rendered seg visibility check via the env observation dict
         obs = env.env._get_observations()

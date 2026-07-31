@@ -72,7 +72,7 @@ def smoke_task(task, cfg, data_dir, n, seed, out_dir, min_px_gate=100, cols=6):
         used_target_xy.append(np.array(scene["target_new_xy"]))
         R.reset_to_init_state(env, new_init)
         S.apply_fixture_edits(env, fx)
-        S.settle(env, spec.settle_steps)
+        S.settle(env, spec.settle_physics_steps)
         obs = env.env._get_observations()
         raw = obs["agentview_segmentation_instance"][..., 0]
         segids = lut[np.clip(raw, 0, len(lut) - 1)]

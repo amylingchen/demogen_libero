@@ -348,7 +348,7 @@ def main():
             calib = list(sources)[:args.relation_calib or len(sources)]
             for k in calib:
                 R.reset_to_init_state(env, sources[k][0].init_state)
-                S.settle(env, S.SpatialSpec().settle_steps)
+                S.settle(env, S.SpatialSpec().settle_physics_steps)
                 b = env.sim.data.get_joint_qpos(P.BOWL_A)[:3]
                 for key in band_keys:
                     if key in S.ALL_FIXTURES:
@@ -370,7 +370,7 @@ def main():
         def usable(state, fx):
             R.reset_to_init_state(env, state)
             S.apply_fixture_edits(env, fx)
-            S.settle(env, S.SpatialSpec().settle_steps)
+            S.settle(env, S.SpatialSpec().settle_physics_steps)
             # force_update is required, not optional: settle() drives env.sim.step()
             # directly, which never touches robosuite's observable cache, and
             # reset_to_init_state() left that cache holding the env's DEFAULT reset

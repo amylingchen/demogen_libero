@@ -149,7 +149,20 @@ class SpatialSpec:
     twin_on_support_p: float = 0.35      # prob. of resting the twin bowl on the cabinet top (req 5)
     group_tries: int = 600
     indep_tries: int = 400
-    settle_steps: int = 6                # physics steps to seat independent objects
+    settle_physics_steps: int = 200       # PHYSICS steps (env.sim.step()), NOT
+                                         # control steps.  One env.step() is 25
+                                         # of these (control 50 ms / model 2 ms),
+                                         # so the old value of 6 settled for
+                                         # 12 ms where seating a dropped object
+                                         # takes ~120 ms -- measured, a bowl
+                                         # placed on the ramekin had fallen
+                                         # 0.06 of its 1.83 cm at step 6 and
+                                         # converged at step 60.  200 matches
+                                         # screen_spatial_pairs' --settle-steps
+                                         # default, and it has to: the screener
+                                         # certifies the state it screened, so
+                                         # emitting a less-settled one emits a
+                                         # scene nothing ever validated.
 
 
 def _yaw_to_quat(theta: float) -> np.ndarray:
@@ -545,8 +558,47 @@ def apply_fixture_edits(env, fixture_edits: dict):
     env.sim.forward()
 
 
-def settle(env, steps: int):
-    """Let dropped independent objects seat on the table."""
-    zero = np.zeros(env.action_dim if hasattr(env, "action_dim") else 7)
-    for _ in range(steps):
+def settle(env, steps: int, tol: float = 1e-3, require_converged: bool = True):
+    """Let dropped independent objects seat on the table.
+
+    `steps` is a CAP in PHYSICS steps (`env.sim.step()`), not control steps --
+    one `env.step()` is ~25 of these.  The distinction is not pedantic: this
+    function ran for 6 of them for months, which is 12 ms, over which a bowl
+    dropped onto the ramekin falls 0.6 of the 18.3 mm it eventually falls.  The
+    scenes were fine; the states written out were premature, and every
+    downstream artifact rendered from them -- rgb, seg, depth, obj_pos --
+    showed a layout that exists for two physics steps and never again.
+
+    Nothing caught it because the old version returned nothing.  So this one
+    stops when the free bodies actually stop, and says so:
+
+      returns {"steps": used, "max_speed": m/s, "converged": bool,
+               "max_disp_cm": how far anything moved while settling}
+
+    `require_converged` raises instead of returning a scene that is still
+    moving at the cap -- an unsettled state is not a scene worth emitting, and
+    a caller that ignores the report is how this happened the first time.
+    """
+    free = [env.sim.model.joint_id2name(j)
+            for j in range(env.sim.model.njnt)
+            if env.sim.model.jnt_type[j] == 0]
+    before = {j: env.sim.data.get_joint_qpos(j)[:3].copy() for j in free}
+    used, speed = 0, float("inf")
+    for used in range(1, steps + 1):
         env.sim.step()
+        speed = max((float(np.linalg.norm(env.sim.data.get_joint_qvel(j)[:3]))
+                     for j in free), default=0.0)
+        if speed < tol:
+            break
+    disp = max((float(np.linalg.norm(
+        env.sim.data.get_joint_qpos(j)[:3] - before[j])) for j in free),
+        default=0.0) * 100.0
+    rep = {"steps": used, "max_speed": speed, "converged": speed < tol,
+           "max_disp_cm": disp}
+    if require_converged and not rep["converged"]:
+        raise RuntimeError(
+            f"settle did not converge: {speed:.2e} m/s still moving after "
+            f"{used} physics steps (tol {tol:.0e}); objects moved "
+            f"{disp:.2f} cm. Emitting this state would store a layout the "
+            f"simulator is still resolving.")
+    return rep
