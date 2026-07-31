@@ -558,7 +558,7 @@ def apply_fixture_edits(env, fixture_edits: dict):
     env.sim.forward()
 
 
-def settle(env, steps: int, tol: float = 1e-3, require_converged: bool = True):
+def settle(env, steps: int, tol: float = 1e-3, require_converged: bool = False):
     """Let dropped independent objects seat on the table.
 
     `steps` is a CAP in PHYSICS steps (`env.sim.step()`), not control steps --
@@ -575,9 +575,13 @@ def settle(env, steps: int, tol: float = 1e-3, require_converged: bool = True):
       returns {"steps": used, "max_speed": m/s, "converged": bool,
                "max_disp_cm": how far anything moved while settling}
 
-    `require_converged` raises instead of returning a scene that is still
-    moving at the cap -- an unsettled state is not a scene worth emitting, and
-    a caller that ignores the report is how this happened the first time.
+    `require_converged` raises instead of returning. It defaults OFF because
+    the callers that matter are candidate loops: a scene still moving at the
+    cap should be REJECTED and the next jitter tried, exactly like the
+    visibility gate, not turned into a crash that abandons the whole task.
+    Callers that emit data must gate on `converged` themselves -- and a
+    non-converging settle prints a warning either way, because returning
+    nothing at all is how a 10x-short settle survived unnoticed.
     """
     free = [env.sim.model.joint_id2name(j)
             for j in range(env.sim.model.njnt)
@@ -595,10 +599,12 @@ def settle(env, steps: int, tol: float = 1e-3, require_converged: bool = True):
         default=0.0) * 100.0
     rep = {"steps": used, "max_speed": speed, "converged": speed < tol,
            "max_disp_cm": disp}
-    if require_converged and not rep["converged"]:
-        raise RuntimeError(
-            f"settle did not converge: {speed:.2e} m/s still moving after "
-            f"{used} physics steps (tol {tol:.0e}); objects moved "
-            f"{disp:.2f} cm. Emitting this state would store a layout the "
-            f"simulator is still resolving.")
+    if not rep["converged"]:
+        msg = (f"settle did not converge: {speed:.2e} m/s still moving after "
+               f"{used} physics steps (tol {tol:.0e}); objects moved "
+               f"{disp:.2f} cm. This state is still being resolved by the "
+               f"simulator and should not be emitted.")
+        if require_converged:
+            raise RuntimeError(msg)
+        print(f"[settle] {msg}", flush=True)
     return rep

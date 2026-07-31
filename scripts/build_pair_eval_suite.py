@@ -380,17 +380,21 @@ def main():
                                          addrs, nq, drawer_adr)
                     R.reset_to_init_state(env, st)
                     S.apply_fixture_edits(env, f2)
-                    S.settle(env, S.SpatialSpec().settle_physics_steps)
+                    rep = S.settle(env, S.SpatialSpec().settle_physics_steps)
                     obs = env.env._get_observations(force_update=True)
                     seg = lut[np.clip(obs["agentview_segmentation_instance"][..., 0],
                                       0, len(lut) - 1)]
                     # both bowls carry the stricter floor, same rule the training
                     # gate applies: an eval scene where the distractor is hidden
                     # does not test the choice the instruction is asking for
-                    if all(int((seg == 60 + 10 * i).sum())
-                           >= (args.min_px_bowl if inst.startswith("akita_black_bowl")
-                               else args.min_px)
-                           for i, inst in enumerate(P.FREE_INST)):
+                    # convergence is a gate like visibility, not a crash: a
+                    # candidate the simulator is still resolving is simply not
+                    # this scene, and the next jitter draw may well be fine
+                    if rep["converged"] and all(
+                            int((seg == 60 + 10 * i).sum())
+                            >= (args.min_px_bowl if inst.startswith("akita_black_bowl")
+                                else args.min_px)
+                            for i, inst in enumerate(P.FREE_INST)):
                         sc, state, fx = cand, st, f2
                         break
                 if sc is None:
