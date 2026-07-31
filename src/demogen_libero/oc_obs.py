@@ -42,7 +42,12 @@ def load_task_config() -> dict:
 
 
 def display_name(instance_name: str) -> str:
-    return instance_name.rsplit("_", 1)[0].replace("_", " ") + " 1"
+    """'salad_dressing_1' -> 'salad dressing 1'. Preserves the real numeric
+    suffix so identical-type twins stay distinct ('akita_black_bowl_2' ->
+    'akita black bowl 2'); libero_object instances are all _1 so this is
+    unchanged there."""
+    base, idx = instance_name.rsplit("_", 1)
+    return base.replace("_", " ") + " " + idx
 
 
 def make_oc_env(bddl_file: str, height: int = 256, width: int = 256):
@@ -153,9 +158,13 @@ OBS_KEYS = (
     "eye_in_hand_rgb", "eye_in_hand_depth", "eye_in_hand_seg",
     "ee_pos", "ee_ori", "ee_states", "gripper_states", "joint_states",
 )
-# extra obs written when present in the rollout: lossless mm depth (uint16) and
-# per-frame ground-truth object poses (world frame, quat xyzw)
-EXTRA_OBS_KEYS = ("agentview_depth_mm", "eye_in_hand_depth_mm", "obj_pos", "obj_quat")
+# extra obs written when present in the rollout: lossless mm depth (uint16),
+# per-frame ground-truth object poses (world frame, quat xyzw), and the cabinet's
+# top drawer -- an articulated part whose pose lives in a slide joint rather than
+# in body_pos, so it gets its own fields instead of an obj_pos slot that would be
+# degenerate in the nine tasks that leave it shut (see spatial_scene.DRAWER_BODY)
+EXTRA_OBS_KEYS = ("agentview_depth_mm", "eye_in_hand_depth_mm", "obj_pos", "obj_quat",
+                  "drawer_pos", "drawer_qpos")
 
 # per-frame phase_id labels (DemoGen two-stage structure; settle frames belong
 # to the segment they precede). phase_id[t] in {0,1,2,3} indexes the per-demo
@@ -307,6 +316,7 @@ def write_oc_demo(hdf5_path: str, demo_name: str, rollout: dict, success: bool,
 def metainfo_entry(task_key: str, rollout: dict, object_order: list[str],
                    init_state: np.ndarray, subtasks: list = None) -> dict:
     names = [display_name(x) for x in object_order]
+    goal_name = names[1] if len(names) > 1 else "basket 1"
     entry_subtasks = {"subtasks": subtasks} if subtasks is not None else {}
     if "phase_id" in rollout:
         entry_subtasks["phases"] = phase_stages(rollout["phase_id"], names[0], names[1])
@@ -314,10 +324,10 @@ def metainfo_entry(task_key: str, rollout: dict, object_order: list[str],
         **entry_subtasks,
         "success": True,
         "initial_state": np.asarray(init_state, dtype=float).tolist(),
-        "task_nouns": ["robot", names[0], "basket 1"],
+        "task_nouns": ["robot", names[0], goal_name],
         "task_description": task_key.replace("_", " "),
         "target_object": names[0],                          # object to pick
-        "goal_object": names[1] if len(names) > 1 else "basket 1",  # where to place
+        "goal_object": goal_name,                           # where to place
         "object_names": names,
         "exo_boxes": boxes_for_seg(rollout["agentview_seg"], names),
         "ego_boxes": boxes_for_seg(rollout["eye_in_hand_seg"], names),
