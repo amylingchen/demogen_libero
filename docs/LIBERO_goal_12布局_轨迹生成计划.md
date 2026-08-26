@@ -127,6 +127,20 @@ cf 格与 unseen 格的轨迹同样生成（可达性证明，且与训练格用
 
 ## 7. goal 套件接线清单（相对现有 object 管线的差异点）
 
+**接线状态（2026-08-25 逐条对照实际产物核实）：**
+
+| 条目 | 状态 | 证据 |
+|---|---|---|
+| 7.1 场景加载 + settle 验证抽屉/旋钮不自动 | ✅ | `sample_goal_suite` settle 门含 `articulation_drift<0.005`，12 布局全过 |
+| 7.2 goal 专属相机参数 + 重投影自检 | ✅ | `camera_params.json` 自检 4/4。**顺带纠正一条约定**：`project_points_from_world_to_camera` 返回的行是 upright 约定，索引本数据集存储的原始 GL 图像需 `H-1-row`（实测：奶酪投影行 154 vs 分割质心 100，盘子 171 vs 86，列坐标精确吻合） |
+| 7.3 seg id 表 + cabinet 拆 middle/top drawer 部件级 id | ❌ **未做** | `instances_to_ids` 只有整体 `wooden_cabinet_1`，抽屉在分割层不可单独寻址；需改分割方案（geom 级再按 body 归组），非配置项 |
+| 7.4 object_geometry.json | ❌ **未做** | 部分信息散在 `output/goal_geometry/goal_event_ee.json`（实测作业点偏移），无正式几何导出 |
+| 7.5 states 维度实测不硬编码 | ✅ | 实测 79 = time+qpos(41)+qvel(37) |
+| 7.6 fixture 位姿 wxyz 写 sidecar + **像素验证** | ✅ | `scripts/verify_goal_fixture_pixels.py` → `fixture_pixel_check.json`：12 布局复现像素差 ≤0.23%，**阴性对照（不应用 fixture_edits）9.8–28.7%**；投影 8 类点 7 类 12/12，酒架底座 5/12 因被柜体遮挡（其任务关键点槽位 12/12） |
+| 7.7 每条轨迹记录 fixture 末位姿 | ✅ **不需要** | fixture 无 free joint、为焊接体，撞不动（§1.3 的前提有误，见文首） |
+
+未做的 7.3/7.4 均为 OC 观测渲染的前置工作；7.6 的阴性对照同时证明了 `states`+attrs 足以重建场景，即 OC 观测可走状态重放、无需重跑物理。
+
 1. **场景加载**：goal 的 KITCHEN 场景 + 三个 articulated fixture（cabinet 抽屉关节、stove 旋钮）；settle 时验证抽屉不自行滑开、旋钮不自转。
 2. **相机参数**：goal 套件 agentview 与 object/spatial 不同（逐套件相机不同是既有教训，spatial 上用错参数曾偏 320px）。用 `dump_camera_params.py` 从 goal env 导出，**先跑重投影残差自检**（把已知 3D 点投回像素与渲染对照）再进生成。
 3. **seg id 表**：OBJECT_ORDER 是 object 套件的，为 goal 新建（4 可动物体 + 3 fixture + gripper），其中 **cabinet 需拆出 middle_drawer 与 top_drawer 两个部件级 id**（柜体与各抽屉分别可寻址）；沿用"图像上下翻转后存储（upright）"的仓库约定，并跑翻转指纹检查（中线物体正确、上下成对互换 = 漏翻）。
