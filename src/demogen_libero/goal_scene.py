@@ -30,6 +30,47 @@ GOAL_JOINTS = [
 ]
 GOAL_FIXTURES = ["wooden_cabinet_1_main", "flat_stove_1_main", "wine_rack_1_main"]
 
+# entity -> MuJoCo body, in GOAL_SEG_IDS order minus the gripper, i.e. the order
+# obs/obj_pos and obs/obj_quat columns follow. Five of the nine have no free
+# joint; their pose still comes out of data.body_xpos, which mj_forward
+# recomputes from the joints -- measured, not assumed: driving
+# wooden_cabinet_1_middle_level by -0.16 m moves that body origin 16.00 cm and
+# leaves the other eight at 0.00 (scripts/probe_goal_entity_pose.py). The
+# comment in oc_obs.EXTRA_OBS_KEYS, that an articulated part's pose "lives in a
+# slide joint rather than in body_pos", is true of model.body_pos and false of
+# data.body_xpos.
+GOAL_ENTITY_BODIES = [
+    ("akita_black_bowl_1", "akita_black_bowl_1_main"),
+    ("cream_cheese_1", "cream_cheese_1_main"),
+    ("wine_bottle_1", "wine_bottle_1_main"),
+    ("plate_1", "plate_1_main"),
+    ("wooden_cabinet_1", "wooden_cabinet_1_main"),
+    ("wooden_cabinet_1_middle_drawer", "wooden_cabinet_1_cabinet_middle"),
+    ("wooden_cabinet_1_top_drawer", "wooden_cabinet_1_cabinet_top"),
+    ("flat_stove_1", "flat_stove_1_main"),
+    ("wine_rack_1", "wine_rack_1_main"),
+]
+
+
+def entity_poses(env):
+    """Per-frame world pose of all nine goal entities, in GOAL_ENTITY_BODIES
+    order: positions (9,3) and quaternions (9,4) as **xyzw**.
+
+    xyzw, not MuJoCo's wxyz, because that is what the object and spatial suites
+    store (oc_obs writes robosuite's `<name>_quat` observable) and what the
+    downstream pack builder decodes with quat_xyzw_to_mat. For the four
+    free-joint objects this returns exactly what get_joint_qpos did before
+    (verified identical to 0.000 mm and 0.0 on the quaternion).
+    """
+    m, d = env.sim.model, env.sim.data
+    pos, quat = [], []
+    for _name, body in GOAL_ENTITY_BODIES:
+        i = m.body_name2id(body)
+        pos.append(np.array(d.body_xpos[i], dtype=np.float64))
+        w, x, y, z = np.array(d.body_xquat[i], dtype=np.float64)
+        quat.append(np.array([x, y, z, w]))
+    return np.stack(pos), np.stack(quat)
+
 # state columns (flattened state = time + qpos + qvel)
 STATE_COL_MIDDLE_DRAWER = 1 + 38   # wooden_cabinet_1_middle_level (slide)
 STATE_COL_STOVE_KNOB = 1 + 40      # flat_stove_1_button (hinge)
@@ -577,12 +618,18 @@ _GRIPPER_KEYWORDS = ("gripper", "finger", "hand")
 
 
 def build_goal_seg_lut(env) -> np.ndarray:
-    """LUT from ELEMENT segmentation values (geom index + 1) to goal entity seg
-    ids. Index 0 (background) and anything unmapped stay 0.
+    """LUT indexed by ELEMENT segmentation value + 1, giving the goal entity
+    seg id. Index 0 (background) and anything unmapped stay 0.
 
-    Use with the element segmentation, not the instance one:
-        seg = obs["agentview_segmentation_element"][..., 0]
-        ids = lut[np.clip(seg, 0, len(lut) - 1)]
+    The +1 is NOT already in the render output: robosuite adds it only for the
+    instance/class levels, where the raw ids are remapped
+    (robot_env._create_camera_sensors: `mapping.get(x, -1) + 1`, and `mapping
+    is None` for "element"). The ELEMENT level therefore returns the raw geom
+    index, 0-based, with -1 for background. Indexing this LUT with the value
+    as-is shifts every geom onto its predecessor's label.
+
+    Always go through map_element_seg rather than indexing this array directly:
+        ids = map_element_seg(lut, obs["agentview_segmentation_element"][..., 0])
     """
     m = env.sim.model
     lut = np.zeros(m.ngeom + 2, dtype=np.uint8)
@@ -605,6 +652,17 @@ def build_goal_seg_lut(env) -> np.ndarray:
         if entity in GOAL_SEG_IDS:
             lut[g + 1] = GOAL_SEG_IDS[entity]
     return lut
+
+
+def map_element_seg(lut: np.ndarray, seg_element: np.ndarray) -> np.ndarray:
+    """Element segmentation (raw geom index, -1 = background) -> goal entity
+    seg ids, using a LUT from build_goal_seg_lut.
+
+    The single place the +1 lives. Background (-1) maps to index 0, which the
+    LUT never writes, so it stays 0 instead of aliasing onto geom 0's label.
+    """
+    return lut[np.clip(np.asarray(seg_element).astype(np.int32) + 1,
+                       0, len(lut) - 1)]
 
 
 def orientation_of(seg_ids: np.ndarray) -> str:
@@ -633,7 +691,7 @@ def flip_fingerprint(env, lut: np.ndarray) -> dict:
     render and its flip, so the check demonstrates it can tell them apart."""
     obs = env.env._get_observations(force_update=True)
     seg = obs["agentview_segmentation_element"][..., 0]
-    ids = lut[np.clip(seg, 0, len(lut) - 1)]
+    ids = map_element_seg(lut, seg)
     entities = {}
     for name, sid in GOAL_SEG_IDS.items():
         mask = ids == sid

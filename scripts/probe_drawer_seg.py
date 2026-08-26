@@ -59,9 +59,9 @@ def main():
             # belong to, which is what a part-level mask would be built from
             by_body = defaultdict(int)
             for v in uniq:
-                if v <= 0 or v > m.ngeom:
+                if v < 0 or v >= m.ngeom:
                     continue
-                bid = int(m.geom_bodyid[v - 1])
+                bid = int(m.geom_bodyid[v])
                 by_body[m.body_id2name(bid)] += int((seg == v).sum())
             report["element_by_body"] = {k: int(n) for k, n in
                                          sorted(by_body.items(), key=lambda x: -x[1])}
@@ -89,9 +89,9 @@ def main():
         seg = obs["agentview_segmentation_element"][..., 0]
         counts = Counter()
         for v in set(int(x) for x in np.unique(seg)):
-            if v <= 0 or v > m.ngeom:
+            if v < 0 or v >= m.ngeom:
                 continue
-            counts[m.body_id2name(int(m.geom_bodyid[v - 1]))] += int((seg == v).sum())
+            counts[m.body_id2name(int(m.geom_bodyid[v]))] += int((seg == v).sum())
         per_open[name] = {p: counts.get(p, 0) for p in CABINET_PARTS}
         print(f"[middle drawer {name:6s} qpos={qpos:+.2f}] " +
               "  ".join(f"{p.split('cabinet_')[-1]}={counts.get(p,0)}"
@@ -130,7 +130,7 @@ def main():
         for part in CABINET_PARTS[:3]:
             bid = m.body_name2id(part)
             n = sum(int((seg == v).sum()) for v in set(int(x) for x in np.unique(seg))
-                    if 0 < v <= m.ngeom and int(m.geom_bodyid[v - 1]) == bid)
+                    if 0 <= v < m.ngeom and int(m.geom_bodyid[v]) == bid)
             px[part.split("cabinet_")[-1]] = n
         naming[f"{lvl}_level"]["px_while_open"] = px
     env.close()

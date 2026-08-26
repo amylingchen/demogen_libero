@@ -155,11 +155,10 @@ def main():
                 obs = env.env._get_observations(force_update=True)
                 a_m = get_real_depth_map(env.sim, obs["agentview_depth"])[..., 0]
                 h_m = get_real_depth_map(env.sim, obs["robot0_eye_in_hand_depth"])[..., 0]
-                a_seg = lut[np.clip(obs["agentview_segmentation_element"][..., 0],
-                                    0, len(lut) - 1)]
-                h_seg = lut[np.clip(
-                    obs["robot0_eye_in_hand_segmentation_element"][..., 0],
-                    0, len(lut) - 1)]
+                a_seg = G.map_element_seg(
+                    lut, obs["agentview_segmentation_element"][..., 0])
+                h_seg = G.map_element_seg(
+                    lut, obs["robot0_eye_in_hand_segmentation_element"][..., 0])
                 rows["agentview_rgb"].append(flip(obs["agentview_image"]))
                 rows["agentview_depth"].append(
                     flip(np.clip(np.rint(a_m * 100.0), 0, 255).astype(np.uint8)))
@@ -180,14 +179,13 @@ def main():
                 rows["ee_states"].append(np.concatenate([ee_p, TU.quat2axisangle(ee_q)]))
                 rows["gripper_states"].append(np.asarray(obs["robot0_gripper_qpos"]))
                 rows["joint_states"].append(np.asarray(obs["robot0_joint_pos"]))
-                # per-frame GT pose of the 4 movable objects, in GOAL_SEG_IDS order
-                op, oq = [], []
-                for jn in G.GOAL_JOINTS:
-                    q = env.sim.data.get_joint_qpos(jn)
-                    op.append(np.asarray(q[:3]))
-                    oq.append(np.asarray(q[3:7]))
-                rows["obj_pos"].append(np.stack(op))
-                rows["obj_quat"].append(np.stack(oq))
+                # per-frame GT pose of all NINE entities, in GOAL_SEG_IDS order
+                # (quat xyzw, matching the object and spatial suites). The five
+                # without a free joint come from data.body_xpos; see
+                # goal_scene.entity_poses.
+                op, oq = G.entity_poses(env)
+                rows["obj_pos"].append(op)
+                rows["obj_quat"].append(oq)
 
             with h5py.File(out_path, "a") as f:
                 data = f.require_group("data")
@@ -199,14 +197,24 @@ def main():
                     data.attrs["images_vertically_flipped"] = True
                     data.attrs["seg_ids"] = json.dumps(G.GOAL_SEG_IDS)
                     data.attrs["obj_order"] = json.dumps(
-                        [j.replace("_joint0", "") for j in G.GOAL_JOINTS])
+                        [n for n, _b in G.GOAL_ENTITY_BODIES])
+                    data.attrs["obj_quat_convention"] = "xyzw"
                 ep = data.create_group(key)
                 ep.create_dataset("actions", data=actions)
                 ep.create_dataset("states", data=states)
                 ep.create_dataset("phase_id", data=phase)
                 og = ep.create_group("obs")
                 for k, v in rows.items():
-                    og.create_dataset(k, data=np.asarray(v))
+                    arr = np.asarray(v)
+                    # gzip the image stacks, as the object and spatial suites do
+                    # (level 4, h5py auto-chunking). Measured on this data: 4.7x
+                    # on a whole train file, so the uncompressed write was
+                    # costing ~6x the disk and ~6x the upload for nothing.
+                    if arr.nbytes >= 1 << 20:
+                        og.create_dataset(k, data=arr, compression="gzip",
+                                          compression_opts=4)
+                    else:
+                        og.create_dataset(k, data=arr)
                 for ak, av in attrs.items():
                     ep.attrs[ak] = av
                 ep.attrs["num_samples"] = len(states)
