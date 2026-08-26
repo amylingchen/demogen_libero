@@ -533,6 +533,119 @@ def contact_frame(hdf5_path: str, demo_key: str, contact_spec, margin: int = 8) 
     return max(int(moving[0]) - margin, 1)
 
 
+
+# ---------------------------------------------------------------------------
+# Segmentation entity table for the goal suite (plan §7.3).
+#
+# The INSTANCE segmentation this repo uses for libero_object returns one mask
+# per object instance, which for the cabinet means a single `wooden_cabinet_1`
+# covering the whole unit -- "open the middle drawer" then has no mask to
+# ground its noun on. The ELEMENT segmentation returns per-geom ids, and
+# regrouping those by `geom_bodyid` yields per-drawer masks; probed feasible
+# 2026-08-25 (scripts/probe_drawer_seg.py): with the cabinet CLOSED the middle
+# drawer is 412 px and the top drawer 469 px, both groundable from the initial
+# frame.
+#
+# CAVEAT recorded with the probe: a STATIONARY drawer's mask grows when a
+# neighbour opens, because the gap exposes the neighbour's box (opening the
+# middle drawer takes the top drawer from 469 to 4249 px). Never pick the
+# referred drawer by "largest cabinet part mask".
+#
+# Ids follow the repo convention: gripper 50, then entities from 60 in steps
+# of 10, in the order below.
+GOAL_SEG_IDS = {
+    "robot_gripper": 50,
+    "akita_black_bowl_1": 60,
+    "cream_cheese_1": 70,
+    "wine_bottle_1": 80,
+    "plate_1": 90,
+    "wooden_cabinet_1": 100,          # frame only; the drawers get their own ids
+    "wooden_cabinet_1_middle_drawer": 110,
+    "wooden_cabinet_1_top_drawer": 120,
+    "flat_stove_1": 130,
+    "wine_rack_1": 140,
+}
+# body name -> entity, for the bodies that need to be split out or renamed
+_BODY_TO_ENTITY = {
+    "wooden_cabinet_1_cabinet_middle": "wooden_cabinet_1_middle_drawer",
+    "wooden_cabinet_1_cabinet_top": "wooden_cabinet_1_top_drawer",
+    # the bottom drawer is not referred to by any task instruction, so it stays
+    # part of the cabinet frame rather than getting its own id
+    "wooden_cabinet_1_cabinet_bottom": "wooden_cabinet_1",
+}
+_GRIPPER_KEYWORDS = ("gripper", "finger", "hand")
+
+
+def build_goal_seg_lut(env) -> np.ndarray:
+    """LUT from ELEMENT segmentation values (geom index + 1) to goal entity seg
+    ids. Index 0 (background) and anything unmapped stay 0.
+
+    Use with the element segmentation, not the instance one:
+        seg = obs["agentview_segmentation_element"][..., 0]
+        ids = lut[np.clip(seg, 0, len(lut) - 1)]
+    """
+    m = env.sim.model
+    lut = np.zeros(m.ngeom + 2, dtype=np.uint8)
+    for g in range(m.ngeom):
+        bid = int(m.geom_bodyid[g])
+        body = m.body_id2name(bid)
+        if body is None:
+            continue
+        entity = _BODY_TO_ENTITY.get(body)
+        if entity is None:
+            low = body.lower()
+            if any(k in low for k in _GRIPPER_KEYWORDS):
+                entity = "robot_gripper"
+            else:
+                # body names are "<instance>_main" / "<instance>_g12" etc.
+                for inst in GOAL_SEG_IDS:
+                    if body.startswith(inst + "_") or body == inst:
+                        entity = inst
+                        break
+        if entity in GOAL_SEG_IDS:
+            lut[g + 1] = GOAL_SEG_IDS[entity]
+    return lut
+
+
+def orientation_of(seg_ids: np.ndarray) -> str:
+    """Tell whether a segmentation/image array is stored UPRIGHT (row 0 = top,
+    the viewer convention this repo's OC format uses) or in the raw GL
+    orientation (row 0 = bottom), from the content itself.
+
+    The discriminator is physical rather than conventional: the gripper hangs
+    ABOVE the table, so in an upright array its rows are SMALLER than the
+    plate's; in a GL array the order inverts. Reporting a row number alone
+    cannot distinguish the two, which is the whole failure mode this guards
+    against -- a caller that forgets the flip produces arrays whose per-entity
+    pixel counts are identical and whose top/bottom membership is reversed.
+
+    Returns "upright", "gl", or "undecided" (an entity was missing).
+    """
+    g = np.nonzero(seg_ids == GOAL_SEG_IDS["robot_gripper"])[0]
+    p = np.nonzero(seg_ids == GOAL_SEG_IDS["plate_1"])[0]
+    if g.size == 0 or p.size == 0:
+        return "undecided"
+    return "upright" if g.mean() < p.mean() else "gl"
+
+
+def flip_fingerprint(env, lut: np.ndarray) -> dict:
+    """Per-entity pixel counts plus the orientation verdict for both the raw
+    render and its flip, so the check demonstrates it can tell them apart."""
+    obs = env.env._get_observations(force_update=True)
+    seg = obs["agentview_segmentation_element"][..., 0]
+    ids = lut[np.clip(seg, 0, len(lut) - 1)]
+    entities = {}
+    for name, sid in GOAL_SEG_IDS.items():
+        mask = ids == sid
+        if mask.any():
+            entities[name] = {"px": int(mask.sum()),
+                              "mean_row_raw": round(float(np.nonzero(mask)[0].mean()), 1)}
+    return {"entities": entities,
+            "verdict_raw_render": orientation_of(ids),
+            "verdict_flipped": orientation_of(ids[::-1]),
+            "discriminative": orientation_of(ids) != orientation_of(ids[::-1])}
+
+
 def jitter_ok(entity_key: str, xy, unseen_layouts: list,
               floor: float = 0.06) -> bool:
     """GENERATION-TIME leakage guard (user decision 2026-08-23, round-2 review

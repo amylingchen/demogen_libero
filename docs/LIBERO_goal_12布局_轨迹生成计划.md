@@ -129,11 +129,13 @@ cf 格与 unseen 格的轨迹同样生成（可达性证明，且与训练格用
 
 **接线状态（2026-08-25 逐条对照实际产物核实）：**
 
+> ⚠️ **待决：图像存储朝向不一致。** 仓库 OC 约定（`oc_obs.extract_oc_frame`）存**翻转后的 upright**，而 `goal_gen_v3` 走的是 `replay_uniform` 默认录制路径，存的是**原始 GL**（两条独立证据：fixture 像素检查中存储帧与原始 GL 渲染差 ≤0.23%；`orientation_of` 判定为 `gl`）。后果：按 object/spatial 格式写的下游代码读 goal 的 rgb 会上下颠倒。已在 `camera_params.json` 中记录本数据集的朝向与索引方式。三条出路见文末。
+
 | 条目 | 状态 | 证据 |
 |---|---|---|
 | 7.1 场景加载 + settle 验证抽屉/旋钮不自动 | ✅ | `sample_goal_suite` settle 门含 `articulation_drift<0.005`，12 布局全过 |
 | 7.2 goal 专属相机参数 + 重投影自检 | ✅ | `camera_params.json` 自检 4/4。**顺带纠正一条约定**：`project_points_from_world_to_camera` 返回的行是 upright 约定，索引本数据集存储的原始 GL 图像需 `H-1-row`（实测：奶酪投影行 154 vs 分割质心 100，盘子 171 vs 86，列坐标精确吻合） |
-| 7.3 seg id 表 + cabinet 拆 middle/top drawer 部件级 id | ⚠️ **可行性已验证，实现未做** | `scripts/probe_drawer_seg.py` → `output/goal_drawer_seg/drawer_seg_probe.json`：instance 级只有整体 `wooden_cabinet_1`（11 个 id），但 **element 级（38 个 id）按 `geom_bodyid` 归组可得部件掩码**。关闭状态下 middle=412px、top=469px，均高于 60px 门槛，初始帧可接地。关节↔body 命名逐个验证正确（`{lvl}_level` 驱动 `cabinet_{lvl}`，y 由 −0.245 移到 −0.085）。**关键陷阱**：静止抽屉的掩码会因邻居打开而暴涨——开中间抽屉使 `cabinet_top` 从 469px 涨到 4249px（缺口露出上层抽屉箱体），因此**绝不可用"柜体部件里最大的掩码"来选指令所指的抽屉** |
+| 7.3 seg id 表 + cabinet 拆 middle/top drawer 部件级 id | ✅ **已实现**（`goal_scene.GOAL_SEG_IDS` / `build_goal_seg_lut` / `orientation_of` / `flip_fingerprint`；10 实体全覆盖，抽屉部件独立 id 110/120）。可行性证据 | `scripts/probe_drawer_seg.py` → `output/goal_drawer_seg/drawer_seg_probe.json`：instance 级只有整体 `wooden_cabinet_1`（11 个 id），但 **element 级（38 个 id）按 `geom_bodyid` 归组可得部件掩码**。关闭状态下 middle=412px、top=469px，均高于 60px 门槛，初始帧可接地。关节↔body 命名逐个验证正确（`{lvl}_level` 驱动 `cabinet_{lvl}`，y 由 −0.245 移到 −0.085）。**关键陷阱**：静止抽屉的掩码会因邻居打开而暴涨——开中间抽屉使 `cabinet_top` 从 469px 涨到 4249px（缺口露出上层抽屉箱体），因此**绝不可用"柜体部件里最大的掩码"来选指令所指的抽屉** |
 | 7.4 object_geometry.json | ❌ **未做** | 部分信息散在 `output/goal_geometry/goal_event_ee.json`（实测作业点偏移），无正式几何导出 |
 | 7.5 states 维度实测不硬编码 | ✅ | 实测 79 = time+qpos(41)+qvel(37) |
 | 7.6 fixture 位姿 wxyz 写 sidecar + **像素验证** | ✅ | `scripts/verify_goal_fixture_pixels.py` → `fixture_pixel_check.json`：12 布局复现像素差 ≤0.23%，**阴性对照（不应用 fixture_edits）9.8–28.7%**；投影 8 类点 7 类 12/12，酒架底座 5/12 因被柜体遮挡（其任务关键点槽位 12/12） |
