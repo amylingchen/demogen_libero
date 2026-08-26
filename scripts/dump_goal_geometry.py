@@ -69,6 +69,78 @@ def geom_world_corners(model, data, gid):
     return (xmat @ corners.T).T + xpos
 
 
+def geom_body_corners(model, gid):
+    """Same corner set as geom_world_corners, but expressed in the BODY frame:
+    model.geom_pos / model.geom_quat are the geom's placement inside its body,
+    where data.geom_xpos / data.geom_xmat are its world placement.
+
+    The distinction is not cosmetic. A consumer that reconstructs a point as
+    `obj_pos + R(obj_quat) @ offset` needs a body-frame offset; handing it a
+    world-frame offset measured at the reset pose applies the rotation twice.
+    Measured cost of getting this wrong on this suite: the wine bottle's offset
+    is 79.4 mm along its own axis and the rack task lays the bottle over, so the
+    reconstructed centre swings 101.9 mm.
+    """
+    import mujoco
+    from robosuite.utils.transform_utils import quat2mat
+    gtype = model.geom_type[gid]
+    gq = model.geom_quat[gid]                       # wxyz
+    R = quat2mat(np.array([gq[1], gq[2], gq[3], gq[0]]))
+    pos = model.geom_pos[gid]
+    if gtype == mujoco.mjtGeom.mjGEOM_MESH:
+        mid = model.geom_dataid[gid]
+        adr, num = model.mesh_vertadr[mid], model.mesh_vertnum[mid]
+        verts = model.mesh_vert[adr:adr + num]
+        return (R @ verts.T).T + pos
+    size = model.geom_size[gid]
+    if gtype == mujoco.mjtGeom.mjGEOM_SPHERE:
+        half = np.full(3, size[0])
+    elif gtype in (mujoco.mjtGeom.mjGEOM_CYLINDER, mujoco.mjtGeom.mjGEOM_CAPSULE):
+        half = np.array([size[0], size[0], size[1] + (size[0] if
+                         gtype == mujoco.mjtGeom.mjGEOM_CAPSULE else 0.0)])
+    else:
+        half = size[:3].copy()
+    corners = np.array([[sx, sy, sz] for sx in (-half[0], half[0])
+                        for sy in (-half[1], half[1])
+                        for sz in (-half[2], half[2])])
+    return (R @ corners.T).T + pos
+
+
+def body_frame_bounds(model, body_name):
+    """Body-frame AABB over a body's own geoms plus those of its JOINTLESS
+    descendants, all composed into the named body's frame.
+
+    The descent is needed because two of the nine entities carry no geoms on
+    the body they are named after: wooden_cabinet_1_main's shell lives in the
+    child wooden_cabinet_1_base (10 geoms), and flat_stove_1_main's geometry
+    sits deeper still. Jointed children are skipped rather than merged -- the
+    three drawers slide (and two of them are entities in their own right) and
+    the stove knob turns, so folding them in would make the extent depend on
+    the pose it happened to be measured at.
+    """
+    from robosuite.utils.transform_utils import quat2mat
+    root = model.body_name2id(body_name)
+
+    def descend(bid, R, t):
+        pts = [(R @ geom_body_corners(model, g).T).T + t
+               for g in range(model.ngeom) if int(model.geom_bodyid[g]) == bid]
+        for c in range(model.nbody):
+            if int(model.body_parentid[c]) != bid or c == bid:
+                continue
+            if int(model.body_jntnum[c]) > 0:
+                continue
+            bq = model.body_quat[c]                 # wxyz, parent-relative
+            Rc = quat2mat(np.array([bq[1], bq[2], bq[3], bq[0]]))
+            pts += descend(c, R @ Rc, t + R @ model.body_pos[c])
+        return pts
+
+    pts = descend(root, np.eye(3), np.zeros(3))
+    if not pts:
+        return None, None, 0
+    allp = np.concatenate(pts, axis=0)
+    return allp.min(0), allp.max(0), len(pts)
+
+
 def body_geom_bounds(model, data, body_name):
     """World-frame AABB over every geom attached to a body."""
     bid = model.body_name2id(body_name)
@@ -96,9 +168,16 @@ def main():
     env.reset()
     m, d = env.sim.model, env.sim.data
     out = {"_convention": {
-        "objects": ("offset_body / extents are metres in the body frame; the "
-                    "recorded GT pose is the FREE-JOINT origin, which is not "
-                    "the geometric centre for every asset"),
+        "entities": ("THE BLOCK TO USE. offset_body / extents are metres in the "
+                     "BODY frame, keyed by the display names that metainfo's "
+                     "object_names carries, one entry per obs/obj_pos column. "
+                     "Reconstruct a centre as obj_pos + R(obj_quat) @ "
+                     "offset_body, with obj_quat read as xyzw."),
+        "objects": ("LEGACY, WORLD FRAME AT THE RESET POSE -- do not rotate "
+                    "these. Kept because earlier artefacts were built from "
+                    "them. offset_body / extents are metres; the recorded GT "
+                    "pose is the FREE-JOINT origin, which is not the geometric "
+                    "centre for every asset"),
         "fixtures": ("offsets are metres from the fixture's base body position "
                      "(the value stored in each demo's fixture_edits); z is "
                      "absolute world height, since the fixtures rest on the "
@@ -171,11 +250,27 @@ def main():
         for cn_, cv in children.items():
             print(f"      {cn_.split('cabinet_')[-1]:10s} extents="
                   f"{np.round(cv['extents'], 3)} top_z={cv['top_z']}", flush=True)
+    # --- the nine addressable entities, BODY frame, keyed as metainfo names ---
+    print("")
+    print("entities (body frame):", flush=True)
+    ents = {}
+    for (key, body), disp in zip(G.GOAL_ENTITY_BODIES, G.GOAL_ENTITY_DISPLAY):
+        lo, hi, n = body_frame_bounds(m, body)
+        if lo is None:
+            ents[disp] = {"error": "no geoms on " + body}
+            print("  %-16s no geoms on %s" % (disp, body), flush=True)
+            continue
+        ents[disp] = {"body": body, "n_geoms": n,
+                      "offset_body": np.round((lo + hi) / 2.0, 5).tolist(),
+                      "extents": np.round(hi - lo, 5).tolist()}
+        print("  %-16s extents=%s offset_body=%s"
+              % (disp, np.round(hi - lo, 3), np.round((lo + hi) / 2.0, 4)), flush=True)
+    out["entities"] = ents
+
     env.close()
 
     os.makedirs(args.out, exist_ok=True)
-    path = os.path.join(args.out, "object_geometry.json")
-    with open(path, "w") as f:
+    with open(os.path.join(args.out, "object_geometry.json"), "w") as f:
         json.dump(out, f, indent=2)
     cab = out.get("wooden_cabinet_1_main", {}).get("task_reference_points", {})
     if "cabinet_top" in cab and "measured_minus_model_z" in cab["cabinet_top"]:
@@ -184,7 +279,7 @@ def main():
               f"{cab['cabinet_top']['measured_minus_model_z']:+.3f} m "
               f"(the EE releases above the surface, so a small positive value "
               f"is expected)")
-    print(f"wrote {path}")
+    print("wrote " + os.path.join(args.out, "object_geometry.json"))
 
 
 if __name__ == "__main__":

@@ -52,6 +52,14 @@ GOAL_ENTITY_BODIES = [
 ]
 
 
+# display names for the same nine entities, in the same order. Single source:
+# build_goal_metainfo writes these into every metainfo entry's object_names, and
+# the pack builder looks geometry up by them, so a second hand-written copy is
+# how the two drift apart.
+GOAL_ENTITY_DISPLAY = ["bowl", "cream cheese", "wine bottle", "plate", "cabinet",
+                       "middle drawer", "top drawer", "stove", "wine rack"]
+
+
 def entity_poses(env):
     """Per-frame world pose of all nine goal entities, in GOAL_ENTITY_BODIES
     order: positions (9,3) and quaternions (9,4) as **xyzw**.

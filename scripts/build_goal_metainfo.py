@@ -38,8 +38,7 @@ SPLITS = ["train", "quarantine_cf", "quarantine_unseen"]
 
 # display names in GOAL_SEG_IDS order (ids 60,70,...,140), gripper excluded --
 # boxes_for_seg-style id assignment is 60 + 10*index over this list
-ENTITY_NAMES = ["bowl", "cream cheese", "wine bottle", "plate", "cabinet",
-                "middle drawer", "top drawer", "stove", "wine rack"]
+ENTITY_NAMES = G.GOAL_ENTITY_DISPLAY
 ENTITY_IDS = [60, 70, 80, 90, 100, 110, 120, 130, 140]
 
 # what the INSTRUCTION refers to, per task: (thing acted on, destination/None)
