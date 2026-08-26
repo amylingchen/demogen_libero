@@ -133,7 +133,7 @@ cf 格与 unseen 格的轨迹同样生成（可达性证明，且与训练格用
 |---|---|---|
 | 7.1 场景加载 + settle 验证抽屉/旋钮不自动 | ✅ | `sample_goal_suite` settle 门含 `articulation_drift<0.005`，12 布局全过 |
 | 7.2 goal 专属相机参数 + 重投影自检 | ✅ | `camera_params.json` 自检 4/4。**顺带纠正一条约定**：`project_points_from_world_to_camera` 返回的行是 upright 约定，索引本数据集存储的原始 GL 图像需 `H-1-row`（实测：奶酪投影行 154 vs 分割质心 100，盘子 171 vs 86，列坐标精确吻合） |
-| 7.3 seg id 表 + cabinet 拆 middle/top drawer 部件级 id | ❌ **未做** | `instances_to_ids` 只有整体 `wooden_cabinet_1`，抽屉在分割层不可单独寻址；需改分割方案（geom 级再按 body 归组），非配置项 |
+| 7.3 seg id 表 + cabinet 拆 middle/top drawer 部件级 id | ⚠️ **可行性已验证，实现未做** | `scripts/probe_drawer_seg.py` → `output/goal_drawer_seg/drawer_seg_probe.json`：instance 级只有整体 `wooden_cabinet_1`（11 个 id），但 **element 级（38 个 id）按 `geom_bodyid` 归组可得部件掩码**。关闭状态下 middle=412px、top=469px，均高于 60px 门槛，初始帧可接地。关节↔body 命名逐个验证正确（`{lvl}_level` 驱动 `cabinet_{lvl}`，y 由 −0.245 移到 −0.085）。**关键陷阱**：静止抽屉的掩码会因邻居打开而暴涨——开中间抽屉使 `cabinet_top` 从 469px 涨到 4249px（缺口露出上层抽屉箱体），因此**绝不可用"柜体部件里最大的掩码"来选指令所指的抽屉** |
 | 7.4 object_geometry.json | ❌ **未做** | 部分信息散在 `output/goal_geometry/goal_event_ee.json`（实测作业点偏移），无正式几何导出 |
 | 7.5 states 维度实测不硬编码 | ✅ | 实测 79 = time+qpos(41)+qvel(37) |
 | 7.6 fixture 位姿 wxyz 写 sidecar + **像素验证** | ✅ | `scripts/verify_goal_fixture_pixels.py` → `fixture_pixel_check.json`：12 布局复现像素差 ≤0.23%，**阴性对照（不应用 fixture_edits）9.8–28.7%**；投影 8 类点 7 类 12/12，酒架底座 5/12 因被柜体遮挡（其任务关键点槽位 12/12） |
